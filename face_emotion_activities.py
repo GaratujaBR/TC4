@@ -17,6 +17,11 @@ class CombinedVideoAnalyzer:
         self.face_size = 96
         self.prediction_buffer = []
         self.buffer_size = 5
+        self.activity_counter = {}
+        self.emotion_counter = {}
+        self.face_counter = {}
+        self.anomaly_counter = 0
+        self.anomaly_threshold = 0.3
         
     def initialize_face_models(self):
         """Load face detection and recognition models."""
@@ -150,7 +155,7 @@ class CombinedVideoAnalyzer:
             'laughing': 'rindo',
             'eating': 'comendo',
             'sitting': 'sentado',
-            'standing': 'em pé',
+            'standing': 'em pe',
             'walking': 'andando',
             'running': 'correndo',
             'jumping': 'pulando',
@@ -169,14 +174,16 @@ class CombinedVideoAnalyzer:
             'driving': 'dirigindo',
             'shopping': 'comprando',
             'singing': 'cantando',
-            'hugging': 'abraçando',
+            'hugging': 'abracando',
             'kissing': 'beijando',
             'pushing': 'empurrando',
             'pulling': 'puxando',
             'carrying': 'carregando',
             'throwing': 'arremessando',
             'catching': 'pegando',
-            'lifting': 'levantando peso'
+            'lifting': 'levantando peso',
+            'listening music': 'ouvindo musica',
+            'using laptop' : 'usando laptop'
         }
         
         # Traduzir a atividade ou manter original se não houver tradução
@@ -184,17 +191,97 @@ class CombinedVideoAnalyzer:
         
         return translated_activity, confidence.item()
 
+    def generate_summary(self, output_path, total_video_frames):
+        """Generate a markdown summary of the video analysis."""
+        total_activities = sum(self.activity_counter.values())
+        total_emotions = sum(self.emotion_counter.values())
+        total_faces = sum(self.face_counter.values())
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write("# Resumo da Análise do Vídeo\n\n")
+            
+            # Informações gerais do vídeo
+            f.write("## Informações do Vídeo\n\n")
+            f.write(f"- Total de frames no vídeo: {total_video_frames}\n")
+            f.write(f"- Frames analisados com sucesso: {total_activities}\n")
+            if total_video_frames > 0:
+                f.write(f"- Porcentagem de análise: {(total_activities/total_video_frames)*100:.1f}%\n")
+
+            f.write(f"- Número de anomalias detectadas: {self.anomaly_counter}\n")
+            
+            # Nova seção para anomalias
+            f.write("\n## Detecção de Anomalias\n\n")
+            f.write(f"- Total de anomalias detectadas: {self.anomaly_counter}\n")
+            if total_activities > 0:
+                anomaly_percentage = (self.anomaly_counter / total_activities) * 100
+                f.write(f"- Taxa de anomalias: {anomaly_percentage:.2f}%\n")
+            f.write("- Critério: Atividade com confiança inferior a 30%\n")
+
+            # Atividades detectadas
+            f.write("\n## Atividades Detectadas\n\n")
+            if self.activity_counter:
+                sorted_activities = sorted(
+                    self.activity_counter.items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                for activity, count in sorted_activities:
+                    percentage = (count / total_activities) * 100
+                    f.write(f"- {activity}: {percentage:.1f}% ({count} frames)\n")
+            else:
+                f.write("Nenhuma atividade detectada\n")
+            
+            # Emoções detectadas
+            f.write("\n## Emoções Detectadas\n\n")
+            if self.emotion_counter:
+                sorted_emotions = sorted(
+                    self.emotion_counter.items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                for emotion, count in sorted_emotions:
+                    percentage = (count / total_emotions) * 100
+                    f.write(f"- {emotion}: {percentage:.1f}% ({count} detecções)\n")
+            else:
+                f.write("Nenhuma emoção detectada\n")
+            
+            # Pessoas reconhecidas
+            f.write("\n## Pessoas Reconhecidas\n\n")
+            if self.face_counter:
+                sorted_faces = sorted(
+                    self.face_counter.items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                for name, count in sorted_faces:
+                    percentage = (count / total_faces) * 100
+                    f.write(f"- {name}: {percentage:.1f}% ({count} aparições)\n")
+            else:
+                f.write("Nenhuma pessoa reconhecida\n")
+            
+            # Estatísticas gerais
+            f.write("\n## Estatísticas Gerais\n\n")
+            f.write(f"- Total de frames no vídeo: {total_video_frames}\n")
+            f.write(f"- Total de frames processados: {total_activities}\n")
+            f.write(f"- Total de detecções de emoções: {total_emotions}\n")
+            f.write(f"- Total de detecções faciais: {total_faces}\n")
+
     def process_video(self, input_path, output_path, known_face_encodings=None, known_face_names=None):
         """Process video for face recognition, emotion detection, and activity recognition."""
         print("Processing video...")
         cap = cv2.VideoCapture(input_path)
         
-        # Video writer setup
+        if not cap.isOpened():
+            print(f"Error: Could not open video file: {input_path}")
+            return
+            
+        # Get video properties
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
+        # Initialize video writer
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
@@ -206,35 +293,57 @@ class CombinedVideoAnalyzer:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                
+        
+
                 # Activity Recognition
                 action, confidence = self.process_activity(frame)
                 action, confidence = self.smooth_predictions(action, confidence)
-                if confidence > 0.5:
+                
+                ANOMALY_THRESHOLD = 0.3
+                
+                # Exemplo de critério básico: se confiança < 0.3, consideramos anomalia
+                if confidence < self.anomaly_threshold:
+                    self.anomaly_counter += 1
+                    # Opcional: desenhar no frame
+                    cv2.putText(
+                        frame, 
+                        "Anomalia detectada", 
+                        (20, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 
+                        1, 
+                        (0, 0, 255), 
+                        2
+                    )
+                    # Aqui, se quiser, não atualiza self.activity_counter
+                else:
+                    # Atualiza contador de atividade para atividades "normais"
                     current_action = action
                     current_confidence = confidence
+                    self.activity_counter[current_action] = self.activity_counter.get(current_action, 0) + 1
                 
                 # Face Detection and Emotion Recognition
                 aligned_faces, face_locations = self.detect_and_align_face(frame)
                 
-                if not aligned_faces:
-                    cv2.putText(frame, "Nenhum rosto detectado", (20, 40),
-                              cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-                
-                # Process detected faces
                 for face, location in zip(aligned_faces, face_locations):
                     x1, y1, x2, y2 = location
+                    
+                    # Detectar emoção e atualizar contador
                     emotion = self.analyze_emotions(frame, location)
+                    if emotion:
+                        self.emotion_counter[emotion] = self.emotion_counter.get(emotion, 0) + 1
+                    
+                    # Extrair embedding e checar face conhecida
                     face_embedding = self.get_face_embedding(face)
                     name = "Nao Identificado"
                     
-                    if known_face_encodings is not None and known_face_names is not None:
-                        face_distances = [cosine(face_embedding, known_enc) for known_enc in known_face_encodings]
+                    if known_face_encodings and known_face_names:
+                        face_distances = [cosine(face_embedding, enc) for enc in known_face_encodings]
                         best_match_index = np.argmin(face_distances)
                         if face_distances[best_match_index] < 0.3:
                             name = known_face_names[best_match_index]
+                            self.face_counter[name] = self.face_counter.get(name, 0) + 1
                     
-                    # Draw results
+                    # Desenhar bounding box e texto
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     
                     emotion_translations = {
@@ -242,23 +351,38 @@ class CombinedVideoAnalyzer:
                         'fear': 'medo', 'surprise': 'surpreso', 'neutral': 'neutro',
                         'disgust': 'nojo'
                     }
-                    
                     if emotion:
-                        emotion = emotion_translations.get(emotion.lower(), 'anomalia')
+                        emotion = emotion_translations.get(emotion.lower(), emotion)
                     
                     label = f"{name} | Emocao: {emotion}" if emotion else name
-                    cv2.putText(frame, label, (x1, y1-10),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+                    cv2.putText(
+                        frame, 
+                        label, 
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.9, 
+                        (36, 255, 12), 
+                        2
+                    )
                 
-                # Draw activity recognition results
+                # Renderizar texto da atividade e confiança
+                # (caso queira exibir no frame se não for anomalia)
                 self.draw_activity_results(frame, current_action, current_confidence)
                 
+                # Salvar frame processado
                 out.write(frame)
                 pbar.update(1)
+
+            
+        # Generate summary after processing
+        summary_path = os.path.splitext(output_path)[0] + '_resumo.md'
+        self.generate_summary(summary_path, total_frames)
         
+        # Release resources
         cap.release()
         out.release()
-        print("Video processing completed!")
+        cv2.destroyAllWindows()
+        print("\nVideo processing completed!")
 
     def draw_activity_results(self, frame, action, confidence):
         """Draw activity recognition results on frame."""
