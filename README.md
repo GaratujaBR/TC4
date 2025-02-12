@@ -24,6 +24,13 @@ Este projeto implementa um sistema de análise de vídeo que combina três funci
   - Neutro
   - Nojo
 
+### Detecção de Anomalias
+- Identifica comportamentos anômalos no vídeo
+- Considera anomalia quando:
+  - A confiança na detecção de atividade é menor que 30%
+- Marca frames anômalos com alerta visual
+- Gera estatísticas de anomalias no relatório
+
 ### Reconhecimento de Atividades
 - Identifica a atividade sendo realizada no vídeo
 - Suporta diversas atividades como:
@@ -77,11 +84,19 @@ O sistema baixa automaticamente os seguintes modelos:
    ```
 
 3. **Saída**
-   - O sistema gerará um arquivo 'output_combined.mp4'
+   - O sistema gerará:
+     - Um arquivo 'output_combined.mp4'
+     - Um relatório detalhado 'output_combined_resumo.md'
    - O vídeo de saída mostrará:
      - Faces detectadas com nomes
      - Emoções identificadas
      - Atividade atual com nível de confiança
+     - Alertas de anomalias quando detectadas
+   - O relatório incluirá:
+     - Estatísticas gerais do vídeo
+     - Contagem de anomalias detectadas
+     - Distribuição de atividades e emoções
+     - Lista de pessoas reconhecidas
 
 ## Configurações
 
@@ -89,6 +104,7 @@ O sistema possui alguns parâmetros configuráveis:
 - `confidence_threshold`: 0.7 (limiar para detecção facial)
 - `face_size`: 96 (tamanho padrão para processamento facial)
 - `buffer_size`: 5 (frames para suavização temporal)
+- `anomaly_threshold`: 0.3 (limiar para detecção de anomalias)
 
 ## Limitações
 
